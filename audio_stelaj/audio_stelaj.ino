@@ -5,20 +5,24 @@
 #include <PubSubClient.h>
 
 //настройки WIFI и MQTT
-const char* ssid = "***";
-const char* password = "***";
+const char* ssid = "FSOCIETY";
+const char* password = "WannaHackMe";
 const char* mqtt_server = "192.168.0.34";
 #define mqtt_port 1883
 #define MQTT_USER "datmon"
-#define MQTT_PASSWORD "***"
-#define MQTT_SERIAL_PUBLISH_CH "/icircuit/ESP32/serialdata/tx"
-#define MQTT_SERIAL_RECEIVER_CH "/icircuit/ESP32/serialdata/rx"
+#define MQTT_PASSWORD "amabof33"
+#define MQTT_SERIAL_PUBLISH_CH "/ESP32/audioStelaj/tx"
+#define MQTT_SERIAL_RECEIVER_brightness "/ESP32/audioStelaj/brightness"
+#define MQTT_SERIAL_RECEIVER_thisMode "/ESP32/audioStelaj/thisMode"
+#define MQTT_SERIAL_RECEIVER_rainbowSpeed "/ESP32/audioStelaj/rainbowSpeed"
+#define MQTT_SERIAL_RECEIVER_rainbowStep "/ESP32/audioStelaj/rainbowStep"
+
 
 WiFiClient wifiClient;
 
 PubSubClient client(wifiClient);
 
-//технические настройки
+//технические настройки матрицы из ленты
 #define xres 8  //ширина  (количество столбов) 
 #define  yres 6  //высота 
 #define trash 600 // шумы
@@ -26,24 +30,25 @@ PubSubClient client(wifiClient);
 #define PIN 18  //пин ленты 
 
 //настройки звука
-#define noiseFilter 2 //значение шумов (громкость от 0 до 70)
+#define noiseFilter 6 //значение шумов (громкость от 0 до 70)
 #define micSensetive 50 //чувствительность микрофона 
 #define powerKoef 4 // коэфф для повышения чувствительности с ростом частот
 
 //настройки радуги
-#define brightness 255  //типа byte (0...255)
-#define rainbowSpeed 15  //скоротсь изменения радуги
+int brightness = 255;  //типа byte (0...255)
+int rainbowSpeed = 15;  //скоротсь изменения радуги
 #define timeFall 100 //время падения столбца
-#define bowStep 10 //шаг радуги между светодиодами
+int rainbowStep = 10; //шаг радуги между светодиодами
 
+//настройки точки
 //#define timeToFall  1000 //время перед падением точки в миллис
 //#define fallSpeed 500  //скорость падения
 
-CRGB leds[NUM_LEDS];
+CRGB leds[NUM_LEDS];  //у меня стока светодиодов
 
-arduinoFFT FFT = arduinoFFT(); /* Create FFT object */
+arduinoFFT FFT = arduinoFFT(); //у меня ардуино эквалайзер 
 
-int thisMode = 0;  //переменная выбора режима
+int thisMode = 1;  //переменная выбора режима
 byte counter = 1;  //счетчик для режима радуги
 int rainbowTimer = 0; //и таймер
 float smoothValue[xres]; //сглаживание разных громкостей 
@@ -69,8 +74,7 @@ int displayvalue[xres];
 
 void setup() {
   Serial.begin(115200);
-
-  Serial.setTimeout(500); // Set time out for 
+  Serial.setTimeout(500); // Set time out for wifi
   setup_wifi();
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
@@ -97,8 +101,8 @@ void loop() {
      Serial.readBytesUntil( '\n',mun,500);
      publishSerialData(mun);
    }
-  
-  if (thisMode == 0) {
+  //выбираю режим 
+  if (thisMode == 1) {
     /*SAMPLING*/
     for (int i = 0; i < samples; i++)
     {
@@ -129,7 +133,8 @@ void loop() {
       c++;
     }
     //симуляция звука
-    if (digitalRead(5)) {
+    /*
+     if (digitalRead(5)) {
       for (int i; i < xres; i++) {
         peaks[i] = yres;
       }
@@ -139,36 +144,39 @@ void loop() {
       Serial.print(displayvalue[xres - 1]);
       Serial.println(" has been sent");
     */
+    /*
+    Serial.print((float)data_avgs[1]);
+    Serial.print( ", ");
+    Serial.print((float)data_avgs[3]);
+    Serial.print( ", ");
+    Serial.println((float)data_avgs[7]);
+    */
     for (int i = 0; i < xres; i++)
     {
       if (data_avgs[i] < noiseFilter) data_avgs[i] = 0;
       smoothValue[i] = (float) data_avgs[i] * averK + smoothValue[i] * (1 - averK);
       //Serial.println(smoothValue[0]);
-      data_avgs[i] = constrain(data_avgs[i], 0, micSensetive + smoothValue[i]);
-      data_avgs[i] = map(data_avgs[i], 0, micSensetive - (i * powerKoef) + smoothValue[i], 0, yres);
+      data_avgs[i] = constrain(data_avgs[i], noiseFilter, micSensetive + smoothValue[i]);
+      data_avgs[i] = map(data_avgs[i], noiseFilter, micSensetive - (i * powerKoef) + smoothValue[i], 0, yres);
       yvalue = data_avgs[i];
       if (millis() > displayTime[i] && peaks[i] != 0) {
         displayTime[i] = millis() + timeFall;
         peaks[i] = peaks[i] - 1;    // decay by one light
-        /*
-        Serial.print(i);
-        Serial.print(" ,");
         Serial.println(peaks[i]);
-        */
       }
       if (yvalue >= peaks[i]) {
         peaks[i] = yvalue ;
         displayTime[i] = millis() + timeFall;
-        }
+      }
       yvalue = peaks[i];
       displayvalue[i] = yvalue;
     }
     ///*
-      Serial.print(displayvalue[1]);
-      Serial.print( ", ");
-      Serial.print(displayvalue[3]);
-      Serial.print( ", ");
-      Serial.println(displayvalue[7]);
+    Serial.print(displayvalue[1]);
+    Serial.print( ", ");
+    Serial.print(displayvalue[3]);
+    Serial.print( ", ");
+    Serial.println(displayvalue[7]);
     //*/
   }
   animation();
@@ -176,15 +184,26 @@ void loop() {
 void animation() {
   switch (thisMode) {
     case 0:
+      for (int i = 0; i < NUM_LEDS; i++) {
+        leds[i] = CHSV(255, 255, 255);
+      }
+      break;
+    case 1:
       for (int k = 0; k < xres; k++) { //для каждого столбца
         //основные столбцы
         for (int i = 0; i < yres; i++ ) {  //для каждой строчки
-          if (displayvalue[k] > i && k % 2 == 0) leds[(k * yres) + i] = CHSV(counter + (i * bowStep), 255, 255); //проверяю длину столбца и заливаю радугой
-          else if (displayvalue[k] > i && k % 2 == 1) leds[(k * yres) + yres - i - 1] = CHSV(counter + (i * bowStep), 255, 255); //проверяю длину и четность столбца и заливаю радугой
+          if (displayvalue[k] > i && k % 2 == 0) leds[(k * yres) + i] = CHSV(counter + (i * rainbowStep), 255, 255); //проверяю длину столбца и заливаю радугой
+          else if (displayvalue[k] > i && k % 2 == 1) leds[(k * yres) + yres - i - 1] = CHSV(counter + (i * rainbowStep), 255, 255); //проверяю длину и четность столбца и заливаю радугой
           else if (k % 2 == 0) leds[(k * yres) + i] = CHSV(0, 255, 0);  //остальные крашу в черный
           else if (k % 2 == 1) leds[(k * yres) + yres - i - 1] = CHSV(0, 255, 0);  //остальные крашу в черный
           //Serial.println(displayvalue[1]);
         }
+        /*
+        Serial.print(rainbowSpeed);
+        Serial.print(", ");
+        Serial.println(rainbowStep);
+        */
+        
         /*//бегущая точка
           if (displayvalue[k] > maxPoint[k]) {  //если есть значение в столбе
           maxPoint[k] = displayvalue[k] + (k * yres);  //добавляю макспоинт
@@ -213,7 +232,6 @@ void animation() {
       if (millis() > rainbowTimer) {
         counter++;
         //antiCounter++;
-
         rainbowTimer = millis() + rainbowSpeed ;
       }
       break;
@@ -239,7 +257,10 @@ void reconnect() {
       //Once connected, publish an announcement...
       client.publish("/icircuit/presence/ESP32/", "hello world");
       // ... and resubscribe
-      client.subscribe(MQTT_SERIAL_RECEIVER_CH);
+      client.subscribe(MQTT_SERIAL_RECEIVER_brightness);
+      client.subscribe(MQTT_SERIAL_RECEIVER_thisMode);
+      client.subscribe(MQTT_SERIAL_RECEIVER_rainbowSpeed);
+      client.subscribe(MQTT_SERIAL_RECEIVER_rainbowStep);
     } else {
       // Wait 5 seconds before retrying
       delay(5000);
@@ -247,12 +268,22 @@ void reconnect() {
   }
 }
 void callback(char* topic, byte *payload, unsigned int length) {
-    Serial.println("-------new message from broker-----");
-    Serial.print("channel:");
-    Serial.println(topic);
-    Serial.print("data:");  
-    Serial.write(payload, length);
-    Serial.println();
+   if (String(topic) == "/ESP32/audioStelaj/brightness") { //меняется ручками значение канала, дефайн не меняет скобочки
+    brightness = map(payload[0], 48, 57, 0, 255); //настройка яркости подсветки
+    FastLED.setBrightness(brightness);
+   }
+   if (String(topic) == "/ESP32/audioStelaj/thisMode") thisMode = payload[0] - 48; //выбор режима подсветки
+   if (String(topic) == "/ESP32/audioStelaj/rainbowSpeed") rainbowSpeed = map(payload[0] - 48, 0, 9, 0, 20);
+   if (String(topic) == "/ESP32/audioStelaj/rainbowStep") rainbowStep = map(payload[0] - 48, 0, 9, 0, 20);
+   /*
+   Serial.println("-------new message from broker-----");
+   Serial.print("channel:");
+   Serial.println(topic);
+   Serial.print("data:");  
+   Serial.write(payload, length);
+   Serial.println();
+   if ((char)payload[0] == '0') Serial.println("it's wotking!!!");
+    */
 }
 void publishSerialData(char *serialData){
   if (!client.connected()) {
