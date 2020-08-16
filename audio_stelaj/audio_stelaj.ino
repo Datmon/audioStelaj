@@ -5,12 +5,12 @@
 #include <PubSubClient.h>
 
 //настройки WIFI и MQTT
-const char* ssid = "FSOCIETY";
-const char* password = "WannaHackMe";
+const char* ssid = "***";
+const char* password = "***";
 const char* mqtt_server = "192.168.0.34";
 #define mqtt_port 1883
 #define MQTT_USER "datmon"
-#define MQTT_PASSWORD "amabof33"
+#define MQTT_PASSWORD "***"
 #define MQTT_SERIAL_PUBLISH_CH "/ESP32/audioStelaj/tx"
 #define MQTT_SERIAL_RECEIVER_brightness "/ESP32/audioStelaj/brightness"
 #define MQTT_SERIAL_RECEIVER_thisMode "/ESP32/audioStelaj/thisMode"
