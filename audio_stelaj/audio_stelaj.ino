@@ -1,6 +1,7 @@
 #define USE_WIFI 0 //использовать ли MQTT и WIFI
+#define MOVING_POINT 1  //влючить эффект падающей точки
+#define DEBUG_ENABLE 3 //выводить в порт: 0 - ничего, 1 - сразу после Фурье, 2 - после масштабирования под ленту, 3 - падающая точка
 
-#if (USE_WIFI == 1)
 //настройки WIFI и MQTT
 const char* ssid = "FSOCIETY";
 const char* password = "WannaHackMe";
@@ -14,12 +15,9 @@ const char* mqtt_server = "192.168.0.34";
 #define MQTT_SERIAL_RECEIVER_rainbowSpeed "/ESP32/audioStelaj/rainbowSpeed"
 #define MQTT_SERIAL_RECEIVER_rainbowStep "/ESP32/audioStelaj/rainbowStep"
 
-#include <WiFi.h>
-#include <PubSubClient.h>
-
-WiFiClient wifiClient;
-PubSubClient client(wifiClient);
-#endif
+//настройки точки
+#define timeToFall  300 //время перед падением точки в миллис
+#define fallSpeed 150  //скорость падения
 
 //технические настройки матрицы из ленты
 #define xres 8  //ширина  (количество столбов) 
@@ -29,6 +27,7 @@ PubSubClient client(wifiClient);
 #define ledPin 18  //пин ленты 
 
 //настройки звука
+#define samplingFrequencyUs 100 //Hz, must be less than 10000 due to ADC
 #define noiseFilter 6 //значение шумов (громкость от 0 до 70)
 #define micSensetive 50 //чувствительность микрофона 
 #define powerKoef 4 // коэфф для повышения чувствительности с ростом частот
@@ -39,10 +38,6 @@ int brightness = 255;  //типа byte (0...255)
 int rainbowSpeed = 15;  //скоротсь изменения радуги
 int rainbowStep = 10; //шаг радуги между светодиодами
 
-//настройки точки
-//#define timeToFall  1000 //время перед падением точки в миллис
-//#define fallSpeed 500  //скорость падения
-
 #include "arduinoFFT.h"
 #include <driver/adc.h>
 #include "FastLED.h"
@@ -51,20 +46,20 @@ CRGB leds[numberLeds];  //у меня стока светодиодов
 
 arduinoFFT FFT = arduinoFFT(); //у меня ардуино эквалайзер
 
-int thisMode = 1;  //переменная выбора режима
+int thisMode = 2;  //переменная выбора режима
 byte counter = 1;  //счетчик для режима радуги
 int rainbowTimer = 0; //и таймер
 float smoothValue[xres]; //сглаживание разных громкостей
 float averK = 0.006;  //коэф для изменения чувствительности
 
-//бегущая точка
-//byte antiCounter = 128; //противоположный цвет радуги для бегущей точки
-//int pointTime[xres];  //отсчет жизни точки
-//int maxPoint[xres];  //координата максимальной точки
-//int fallOut[xres];
+#if (MOVING_POINT == 1) //бегущая точка
+int pointTime[xres];  //отсчет жизни точки
+int maxPoint[xres];  //координата максимальной точки
+#endif
 
 const uint16_t samples = 64; //This value MUST ALWAYS be a power of 2
-//const double samplingFrequency = 10000; //Hz, must be less than 10000 due to ADC
+unsigned long microseconds;
+unsigned int samplingPeriod;
 
 //Input vectors receive computed results from FFT
 double vReal[samples];
@@ -76,8 +71,29 @@ int displayTime[xres];
 int displayvalue[xres];
 byte color;
 
+#if (USE_WIFI == 1)
+
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+WiFiClient wifiClient;
+PubSubClient client(wifiClient);
+#endif
+
+#if (DEBUG_ENABLE > 0)
+#define SERIAL(x) Serial.begin(x)
+#define DEBUG(x) Serial.print(x)
+#define DEBUGLN(x) Serial.println(x)
+#else
+#define SERIAL(x)
+#define DEBUG(x)
+#define DEBUGLN(x)
+#endif
+
 void setup() {
-  Serial.begin(115200);
+  samplingPeriod = round(1000000 * (1.0 / samplingFrequencyUs));
+
+  SERIAL(115200); //запускаю порт
 #if (USE_WIFI == 1)
   setup_wifi();
   client.setServer(mqtt_server, mqtt_port);
@@ -94,6 +110,7 @@ void setup() {
   //лента
   FastLED.addLeds<WS2812B, ledPin, GRB>(leds, numberLeds).setCorrection( TypicalLEDStrip );
   FastLED.setBrightness(brightness);
+  CHSV spectrumcolor;
   pinMode(18, OUTPUT);
 }
 
@@ -109,8 +126,11 @@ void loop() {
     publishSerialData(mun);
   }
 #endif
+
   //выбираю режим
-  if (thisMode == 1) {
+  if ((thisMode == 1 && micros() - microseconds > samplingPeriod)  || (thisMode == 2 && micros() - microseconds > samplingPeriod)) {
+    microseconds += samplingPeriod;
+
     /*SAMPLING*/
     for (int i = 0; i < samples; i++)
     {
@@ -152,13 +172,23 @@ void loop() {
       Serial.print(displayvalue[xres - 1]);
       Serial.println(" has been sent");
     */
-    /*
-      Serial.print((float)data_avgs[1]);
-      Serial.print( ", ");
-      Serial.print((float)data_avgs[3]);
-      Serial.print( ", ");
-      Serial.println((float)data_avgs[7]);
-    */
+#if (DEBUG_ENABLE == 1)
+    Serial.print((float)data_avgs[0]);
+    Serial.print( ", ");
+    Serial.print((float)data_avgs[1]);
+    Serial.print( ", ");
+    Serial.print((float)data_avgs[2]);
+    Serial.print( ", ");
+    Serial.print((float)data_avgs[3]);
+    Serial.print( ", ");
+    Serial.print((float)data_avgs[4]);
+    Serial.print( ", ");
+    Serial.print((float)data_avgs[5]);
+    Serial.print( ", ");
+    Serial.print((float)data_avgs[6]);
+    Serial.print( ", ");
+    Serial.println((float)data_avgs[7]);
+#endif
     for (int i = 0; i < xres; i++)
     {
       if (data_avgs[i] < noiseFilter) data_avgs[i] = 0; //отсекаю низжний порог шумов
@@ -170,7 +200,7 @@ void loop() {
       if (millis() > displayTime[i] && peaks[i] != 0) { //плавное падение
         displayTime[i] = millis() + timeFall;
         peaks[i] = peaks[i] - 1;    // decay by one light
-        Serial.println(peaks[i]);
+        //Serial.println(peaks[i]);
       }
       if (yvalue >= peaks[i]) {
         peaks[i] = yvalue ;
@@ -179,15 +209,27 @@ void loop() {
       yvalue = peaks[i];
       displayvalue[i] = yvalue;
     }
-    ///*
+#if (DEBUG_ENABLE == 2)
+    Serial.print(displayvalue[0]);
+    Serial.print( ", ");
+    Serial.print(displayvalue[1]);
+    Serial.print( ", ");
+    Serial.print(displayvalue[2]);
+    Serial.print( ", ");
+    Serial.print(displayvalue[3]);
+    Serial.print( ", ");
+    Serial.print(displayvalue[4]);
+    Serial.print( ", ");
     Serial.print(displayvalue[5]);
     Serial.print( ", ");
     Serial.print(displayvalue[6]);
     Serial.print( ", ");
     Serial.println(displayvalue[7]);
-    //*/
+#endif
   }
-  animation();
+  animation();  //расчет столбиков аналайзера
+  fallPoint();  //функция падающей точки
+  FastLED.show(); //вывести на ленту
 }
 void animation() {
   switch (thisMode) {
@@ -207,45 +249,69 @@ void animation() {
           else if (k % 2 == 1) leds[(k * yres) + yres - i - 1] = CHSV(0, 255, 0);  //остальные крашу в черный
           //Serial.println(displayvalue[1]);
         }
-        /*
-          Serial.print(rainbowSpeed);
-          Serial.print(", ");
-          Serial.println(rainbowStep);
-        */
-
-        /*//бегущая точка
-          if (displayvalue[k] > maxPoint[k]) {  //если есть значение в столбе
-          maxPoint[k] = displayvalue[k] + (k * yres);  //добавляю макспоинт
-          leds[maxPoint[k]] = CHSV(antiCounter, 255, 255);
-          pointTime[k] = millis() + timeToFall;  //время появления точки
-          Serial.println("born");
-          } else if (pointTime[k] > millis()) {  //если точка свое не изжила без столба
-          leds[maxPoint[k]] = CHSV(antiCounter, 255, 255);
-          Serial.println(k);
-          } else if (pointTime[k] < millis() && fallOut[k] < millis() && maxPoint[k] > yres * k) {
-          leds[maxPoint[k]] = CHSV(antiCounter, 0, 0);
-          maxPoint[k] = maxPoint[k] - 1;
-          leds[maxPoint[k]] = CHSV(antiCounter, 255, 255);
-          fallOut[k] = millis() + fallSpeed;
-          Serial.println("falling");
-          } else if (maxPoint[k] = yres * k) {
-          fallOut[k] = 0;
-          leds[maxPoint[k]] = CHSV(antiCounter, 0, 0);
-          maxPoint[k] = 0;
-          pointTime[k] = 0;
-          Serial.println("death");
-          }
-        */
       }
-      FastLED.show();
       if (millis() > rainbowTimer) {
         counter++;
-        //antiCounter++;
+        rainbowTimer = millis() + rainbowSpeed ;
+      }
+      break;
+    case 2:
+      for (int k = 0; k < xres; k++) { //для каждого столбца
+        //основные столбцы
+        for (int i = 0; i < yres; i++ ) {  //для каждой строчки
+          color = counter + (i * rainbowStep) + (k * xres) + ((256 / xres) * k);
+          if (displayvalue[k] > i && k % 2 == 0) leds[(k * yres) + i] = CHSV(color, 255, 255); //проверяю длину столбца и заливаю радугой
+          else if (displayvalue[k] > i && k % 2 == 1) leds[(k * yres) + yres - i - 1] = CHSV(color, 255, 255); //проверяю длину и четность столбца и заливаю радугой
+          else if (k % 2 == 0) leds[(k * yres) + i] = CHSV(0, 255, 0);  //остальные крашу в черный
+          else if (k % 2 == 1) leds[(k * yres) + yres - i - 1] = CHSV(0, 255, 0);  //остальные крашу в черный
+          //Serial.println(displayvalue[1]);
+        }
+      }
+      if (millis() > rainbowTimer) {
+        counter++;
         rainbowTimer = millis() + rainbowSpeed ;
       }
       break;
   }
 }
+
+void fallPoint () { //бегущая точка
+#if (MOVING_POINT == 1)
+  for (int g = 0; g < xres; g++) {
+    if (displayvalue[g] >= maxPoint[g]) {
+      maxPoint[g] = displayvalue[g];
+      pointTime[g] = millis() + timeToFall;
+    } else if (pointTime[g] < millis() && maxPoint[g] > 0) {
+      maxPoint[g] = maxPoint[g] - 1;
+      pointTime[g] = millis() + fallSpeed;
+    }
+  }
+  for (int j = 0; j < xres; j = j + 2) {
+    leds[(j * yres) + maxPoint[j]] = CHSV(255, 255, 255);
+  }
+  for (int h = 1; h < xres; h = h + 2) {
+    leds[(h * yres) + yres - maxPoint[h] - 1] = CHSV(255, 255, 255);
+  }
+#endif
+#if (DEBUG_ENABLE == 3)
+  Serial.print(maxPoint[0]);
+  Serial.print( ", ");
+  Serial.print(maxPoint[1]);
+  Serial.print( ", ");
+  Serial.print(maxPoint[2]);
+  Serial.print( ", ");
+  Serial.print(maxPoint[3]);
+  Serial.print( ", ");
+  Serial.print(maxPoint[4]);
+  Serial.print( ", ");
+  Serial.print(maxPoint[5]);
+  Serial.print( ", ");
+  Serial.print(maxPoint[6]);
+  Serial.print( ", ");
+  Serial.println(maxPoint[7]);
+#endif
+}
+
 #if (USE_WIFI == 1)
 void setup_wifi() {
   WiFi.begin(ssid, password);
@@ -257,13 +323,13 @@ void setup_wifi() {
 void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
+    DEBUG("Attempting MQTT connection...");
     // Create a random client ID
     String clientId = "soundStelaj";
     clientId += String(random(0xffff), HEX);
     // Attempt to connect
     if (client.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
-      Serial.println("connected");
+      DEBUGLN("connected");
       //Once connected, publish an announcement...
       client.publish("/icircuit/presence/ESP32/", "hello world");
       // ... and resubscribe
@@ -277,23 +343,35 @@ void reconnect() {
     }
   }
 }
-void callback(char* topic, byte *payload, unsigned int length) {
+void callback(char* topic, byte * payload, unsigned int lengthPackage) {
   if (String(topic) == "/ESP32/audioStelaj/brightness") { //меняется ручками значение канала, дефайн не меняет скобочки
     brightness = map(payload[0], 48, 57, 0, 255); //настройка яркости подсветки
     FastLED.setBrightness(brightness);
   }
-  if (String(topic) == "/ESP32/audioStelaj/thisMode") thisMode = payload[0] - 48; //выбор режима подсветки
-  if (String(topic) == "/ESP32/audioStelaj/rainbowSpeed") rainbowSpeed = map(payload[0] - 48, 0, 9, 0, 20);
-  if (String(topic) == "/ESP32/audioStelaj/rainbowStep") rainbowStep = map(payload[0] - 48, 0, 9, 0, 20);
-  /*
-    Serial.println("-------new message from broker-----");
-    Serial.print("channel:");
-    Serial.println(topic);
-    Serial.print("data:");
-    Serial.write(payload, length);
-    Serial.println();
-    if ((char)payload[0] == '0') Serial.println("it's wotking!!!");
-  */
+  if (String(topic) == "/ESP32/audioStelaj/thisMode") {
+    thisMode = 0;
+    for (int i = 0; i < lengthPackage; i++) {
+      thisMode = thisMode + ((payload[i] - 48) * pow(10, (lengthPackage - i - 1))); //выбор режима подсветки
+    }
+    DEBUG("Got mode: ");
+    DEBUGLN(thisMode);
+  }
+  if (String(topic) == "/ESP32/audioStelaj/rainbowSpeed") {
+    rainbowSpeed = 0;
+    for (int i = 0; i < lengthPackage; i++) {
+      rainbowSpeed = rainbowSpeed + ((payload[i] - 48) * pow(10, (lengthPackage - i - 1))); //выбор режима подсветки
+    }
+    DEBUG("Got rainbow speed: ");
+    DEBUGLN(rainbowSpeed);
+  }
+  if (String(topic) == "/ESP32/audioStelaj/rainbowStep") {
+    rainbowStep = 0;
+    for (int i = 0; i < lengthPackage; i++) {
+      rainbowStep = rainbowStep + ((payload[i] - 48) * pow(10, (lengthPackage - i - 1))); //выбор режима подсветки
+    }
+    DEBUG("Got rainbow step: ");
+    DEBUGLN(rainbowStep);
+  }
 }
 void publishSerialData(char *serialData) {
   if (!client.connected()) {
