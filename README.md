@@ -5,4 +5,4 @@ Led audio spectrum on stelaj
 
 Библиотеки через Arduino IDE подключаются индивидуально.
 
-Пример работы: https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTM0ODIyNTQxNDA2NTg0?story_media_id=2380111989287451209&utm_medium=copy_link
+Пример работы: https://www.instagram.com/stories/highlights/17934822541406584/
